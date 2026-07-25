@@ -1,0 +1,89 @@
+name: Build & Release APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build-apk:
+    name: Build Flutter APK
+    runs-on: ubuntu-latest
+
+    steps:
+      # ── 1. Checkout ───────────────────────────────────────────────── #
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      # ── 2. Java 17 (required by Gradle) ──────────────────────────── #
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # ── 3. Flutter stable ─────────────────────────────────────────── #
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.5'
+          channel: stable
+          cache: true
+
+      # ── 4. Install dependencies ───────────────────────────────────── #
+      - name: Flutter pub get
+        working-directory: flutter_app
+        run: flutter pub get
+
+      # ── 5. Check for errors ───────────────────────────────────────── #
+      - name: Analyze
+        working-directory: flutter_app
+        run: flutter analyze --no-fatal-infos
+        continue-on-error: true
+
+      # ── 6. Build release APK ──────────────────────────────────────── #
+      - name: Build APK
+        working-directory: flutter_app
+        run: |
+          flutter build apk --release \
+            --dart-define=APP_ENV=production
+
+      # ── 7. Rename APK ─────────────────────────────────────────────── #
+      - name: Rename APK
+        run: |
+          mkdir -p artifacts
+          cp flutter_app/build/app/outputs/flutter-apk/app-release.apk \
+             artifacts/SoundPure-v${{ github.run_number }}.apk
+
+      # ── 8. Upload artifact (downloadable for 90 days) ─────────────── #
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SoundPure-APK-v${{ github.run_number }}
+          path: artifacts/SoundPure-v${{ github.run_number }}.apk
+          retention-days: 90
+
+      # ── 9. Create GitHub Release with APK attached ────────────────── #
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.${{ github.run_number }}
+          name: SoundPure v1.0.${{ github.run_number }}
+          body: |
+            ## SoundPure AI Audio Enhancer
+            
+            ### تحميل التطبيق
+            قم بتحميل ملف APK من الـ Assets أدناه وثبّته على جهازك.
+            
+            ### ما الجديد
+            - تنقية الصوت بنموذج Demucs htdemucs_ft
+            - إزالة الضوضاء متعددة المراحل
+            - واجهة عربية احترافية
+            
+            ### Backend API
+            `https://soundpure-backend-production.up.railway.app`
+          files: artifacts/SoundPure-v${{ github.run_number }}.apk
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

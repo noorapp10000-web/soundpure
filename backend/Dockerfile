@@ -23,13 +23,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Pre-download Demucs model so first request is fast
-RUN python3 -c "\
-try:\
-    from demucs.pretrained import get_model;\
-    get_model('htdemucs_ft');\
-    print('Demucs model cached successfully');\
-except Exception as e:\
-    print(f'Will download on first run: {e}')" || true
+RUN python3 -c "from demucs.pretrained import get_model; get_model('htdemucs_ft'); print('Demucs model cached')" \
+    || echo "Demucs model will be downloaded on first request"
 
 EXPOSE 8000
 
