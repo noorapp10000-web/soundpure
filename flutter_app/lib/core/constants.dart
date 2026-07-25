@@ -1,6 +1,6 @@
 /// ⚠️  UPDATE THIS URL after you deploy the backend to Railway!
 /// Go to Railway → your project → Settings → Domains → copy the URL.
-const String kApiBaseUrl = 'https://YOUR-APP.up.railway.app';
+const String kApiBaseUrl = 'https://soundpure-backend-production.up.railway.app';
 
 /// Polling interval while a job is in progress
 const Duration kPollInterval = Duration(seconds: 2);
