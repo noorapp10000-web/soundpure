@@ -35,16 +35,11 @@ Railway auto-detects the Dockerfile in /backend
 ### 3. Set the root directory
 In Railway project settings → **Root Directory** → set to `backend`
 
-### 4. Get your Railway URL
-`Settings → Domains → Generate Domain`  
-You'll get something like: `https://soundpure-production.up.railway.app`
+### 4. Railway URL (already configured ✅)
+Backend is live at:  
+**`https://soundpure-backend-production.up.railway.app`**
 
-### 5. Update the Flutter app
-Open `flutter_app/lib/core/constants.dart` and replace:
-```dart
-const String kApiBaseUrl = 'https://YOUR-APP.up.railway.app';
-```
-with your actual Railway URL.
+This URL is already set in `flutter_app/lib/core/constants.dart`.
 
 ---
 
