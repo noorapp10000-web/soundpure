@@ -2,7 +2,7 @@
 Audio Enhancement Pipeline
 Stages:
   1. FFmpeg: Any format → WAV 44100Hz stereo
-  2. Demucs htdemucs_ft: AI vocal separation
+  2. Demucs htdemucs_ft: AI vocal separation  (real-time progress 18→48%)
   3. noisereduce: Multi-pass spectral gating
   4. Wiener filter: Residual noise removal
   5. Spectral subtraction: Wind / air / hiss removal
@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, Optional
@@ -156,8 +157,6 @@ class AudioPipeline:
 
     async def _to_wav(self, src: str, job_dir: str) -> str:
         dst = os.path.join(job_dir, "converted.wav")
-        # If source is already a WAV, skip conversion to avoid FFmpeg
-        # "same as input" error when src and dst resolve to the same file.
         if src.lower().endswith(".wav") and os.path.abspath(src) == os.path.abspath(dst):
             return src
         cmd = [
@@ -173,6 +172,7 @@ class AudioPipeline:
 
     # ------------------------------------------------------------------ #
     #  Stage 2 – Demucs htdemucs_ft vocal separation                      #
+    #  Real-time progress: reads stderr live, maps Demucs % to 18–48%     #
     # ------------------------------------------------------------------ #
 
     async def _demucs_separate(
@@ -190,8 +190,8 @@ class AudioPipeline:
             "--name", "htdemucs_ft",
             "--two-stems", "vocals",
             "--clip-mode", "rescale",
-            "--device", "cpu",   # explicit CPU — no CUDA available on Railway
-            "--segment", "10",   # 10-second chunks → ~70 % less peak RAM
+            "--device", "cpu",
+            "--segment", "10",
             "-o", job_dir,
             wav_path,
         ]
@@ -201,23 +201,105 @@ class AudioPipeline:
             stderr=asyncio.subprocess.PIPE,
         )
 
-        self._update(jobs, job_id, "processing", 28,
-                     "🤖 Demucs يعالج... (النموذج الأقوى – يأخذ وقتاً)")
+        # ── Real-time stderr reading ─────────────────────────────────── #
+        # Demucs uses tqdm which writes to stderr.
+        # In non-TTY mode tqdm may use \r or \n; we handle both.
+        # We map demucs internal progress 0-100% → job progress 20-47%.
+        PROG_START = 20
+        PROG_END = 47
+        last_progress: list[int] = [PROG_START]   # mutable for closure
+        stderr_chunks: list[str] = []
+
+        async def _read_stderr() -> None:
+            """Read stderr byte-by-byte in chunks, split on \\r or \\n."""
+            partial = b""
+            while True:
+                chunk = await proc.stderr.read(512)
+                if not chunk:
+                    break
+                partial += chunk
+                # Split on carriage return or newline
+                parts = re.split(b"[\r\n]", partial)
+                partial = parts[-1]   # keep incomplete fragment
+                for raw in parts[:-1]:
+                    line = raw.decode(errors="replace").strip()
+                    if not line:
+                        continue
+                    stderr_chunks.append(line)
+                    logger.debug("demucs stderr: %s", line)
+
+                    # ── Parse percentage from tqdm output ── #
+                    # Formats seen: "  28%|███  | 1/4 [00:15<...]"
+                    #               "Separating track ..."
+                    #               "28%"
+                    m = re.search(r"\b(\d{1,3})%", line)
+                    if m:
+                        raw_pct = int(m.group(1))
+                        # clamp to 0-100
+                        raw_pct = max(0, min(100, raw_pct))
+                        mapped = PROG_START + int(raw_pct / 100 * (PROG_END - PROG_START))
+                        if mapped > last_progress[0]:
+                            last_progress[0] = mapped
+                            self._update(
+                                jobs, job_id, "processing", mapped,
+                                f"🤖 Demucs يفصل الصوت البشري... {raw_pct}%",
+                            )
+                    # Also parse "chunk N/M" style output
+                    else:
+                        m2 = re.search(r"(\d+)\s*/\s*(\d+)", line)
+                        if m2:
+                            done, total = int(m2.group(1)), int(m2.group(2))
+                            if total > 0:
+                                raw_pct = int(done / total * 100)
+                                mapped = PROG_START + int(raw_pct / 100 * (PROG_END - PROG_START))
+                                if mapped > last_progress[0]:
+                                    last_progress[0] = mapped
+                                    self._update(
+                                        jobs, job_id, "processing", mapped,
+                                        f"🤖 Demucs يعالج القطعة {done}/{total}...",
+                                    )
+
+        async def _fallback_ticker() -> None:
+            """
+            Fallback: if tqdm doesn't produce parseable output,
+            increment progress slowly from current to PROG_END-2
+            to show the job is alive.
+            """
+            # Wait 45 s before kicking in — give real progress a chance
+            await asyncio.sleep(45)
+            while True:
+                await asyncio.sleep(30)
+                if last_progress[0] < PROG_END - 3:
+                    last_progress[0] = min(last_progress[0] + 3, PROG_END - 3)
+                    self._update(
+                        jobs, job_id, "processing", last_progress[0],
+                        "🤖 Demucs يعالج الصوت البشري... (النموذج الأقوى – يأخذ وقتاً)",
+                    )
+
+        ticker = asyncio.create_task(_fallback_ticker())
 
         try:
-            # 15-minute hard timeout keeps Railway from OOM-killing the container
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(), timeout=900
+            await asyncio.wait_for(
+                asyncio.gather(_read_stderr(), proc.wait()),
+                timeout=900,   # 15-minute hard timeout
             )
         except asyncio.TimeoutError:
             proc.kill()
-            await proc.communicate()
+            # drain so the process cleans up
+            try:
+                await asyncio.wait_for(proc.communicate(), timeout=10)
+            except asyncio.TimeoutError:
+                pass
+            ticker.cancel()
             raise RuntimeError("Demucs timed out after 15 minutes")
+        finally:
+            ticker.cancel()
 
         if proc.returncode != 0:
-            combined = (stderr.decode(errors="replace") +
-                        stdout.decode(errors="replace"))[-600:]
-            raise RuntimeError(f"Demucs failed (exit {proc.returncode}): {combined}")
+            combined = "\n".join(stderr_chunks)[-800:]
+            raise RuntimeError(
+                f"Demucs failed (exit {proc.returncode}): {combined}"
+            )
 
         self._update(jobs, job_id, "processing", 48,
                      "✅ اكتمل فصل الصوت البشري!")
