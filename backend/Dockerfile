@@ -28,5 +28,7 @@ RUN python3 -c "from demucs.pretrained import get_model; get_model('htdemucs_ft'
 
 EXPOSE 8000
 
-# Use shell form so $PORT env var is expanded at runtime
-CMD uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1
+COPY start.sh /app/start.sh
+RUN chmod +x /app/start.sh
+
+CMD ["/bin/sh", "/app/start.sh"]
