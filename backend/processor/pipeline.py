@@ -62,9 +62,22 @@ class AudioPipeline:
             self._update(jobs, job_id, "processing", 5, "🔄 تحويل الصيغة إلى WAV عالي الجودة...")
             wav_path = await self._to_wav(input_path, job_dir)
 
-            # 2 ── Demucs vocal separation
+            # 2 ── Demucs vocal separation (best-effort — may be skipped on low-RAM hosts)
             self._update(jobs, job_id, "processing", 10, "🤖 تحميل نموذج Demucs (htdemucs_ft)...")
-            vocals_path = await self._demucs_separate(wav_path, job_dir, job_id, jobs)
+            try:
+                vocals_path = await self._demucs_separate(wav_path, job_dir, job_id, jobs)
+            except Exception as demucs_err:
+                # Demucs killed by OOM or failed — fall back to spectral-only pipeline
+                logger.warning(
+                    "Demucs skipped for job=%s (%s). "
+                    "Continuing with spectral-only pipeline.",
+                    job_id, demucs_err,
+                )
+                self._update(
+                    jobs, job_id, "processing", 48,
+                    "⚠️ Demucs غير متاح على هذا الخادم — سيتم استخدام المرشحات الطيفية فقط",
+                )
+                vocals_path = wav_path  # process raw converted WAV instead
 
             # 3 ── Load audio as mono float32
             self._update(jobs, job_id, "processing", 50, "📊 تحليل الصوت...")
