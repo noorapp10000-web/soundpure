@@ -319,6 +319,7 @@ class AudioPipeline:
     @staticmethod
     def _spectral_gate(audio: np.ndarray, sr: int) -> np.ndarray:
         # Pass 1 – non-stationary (voice activity-aware)
+        # n_jobs=1: avoid spawning joblib workers that OOM-kill the container
         out = nr.reduce_noise(
             y=audio, sr=sr,
             stationary=False,
@@ -326,14 +327,14 @@ class AudioPipeline:
             n_std_thresh_stationary=1.5,
             time_mask_smooth_ms=60,
             freq_mask_smooth_hz=150,
-            n_jobs=-1,
+            n_jobs=1,
         )
         # Pass 2 – stationary residual (constant background hum / hiss)
         out = nr.reduce_noise(
             y=out, sr=sr,
             stationary=True,
             prop_decrease=0.80,
-            n_jobs=-1,
+            n_jobs=1,
         )
         return out.astype(np.float32)
 
