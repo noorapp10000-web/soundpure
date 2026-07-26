@@ -104,6 +104,10 @@ class AudioPipeline:
             # 8 ── Normalize + save enhanced WAV
             self._update(jobs, job_id, "processing", 90, "📏 تطبيع مستوى الصوت...")
             audio = self._normalize(audio)
+            # Guard: replace any NaN/inf that filters may produce on silent audio
+            if not np.all(np.isfinite(audio)):
+                logger.warning("Non-finite samples in job=%s — replacing with zeros", job_id)
+                audio = np.nan_to_num(audio, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32)
             enhanced_wav = os.path.join(job_dir, "enhanced.wav")
             sf.write(enhanced_wav, audio, sr, subtype="PCM_24")
 
