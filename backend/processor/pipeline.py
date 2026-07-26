@@ -138,7 +138,11 @@ class AudioPipeline:
     # ------------------------------------------------------------------ #
 
     async def _to_wav(self, src: str, job_dir: str) -> str:
-        dst = os.path.join(job_dir, "input.wav")
+        dst = os.path.join(job_dir, "converted.wav")
+        # If source is already a WAV, skip conversion to avoid FFmpeg
+        # "same as input" error when src and dst resolve to the same file.
+        if src.lower().endswith(".wav") and os.path.abspath(src) == os.path.abspath(dst):
+            return src
         cmd = [
             "ffmpeg", "-y",
             "-i", src,
