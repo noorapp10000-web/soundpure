@@ -51,6 +51,10 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 jobs: Dict[str, JobStatus] = {}
 pipeline = AudioPipeline()
 
+# Limit to 1 concurrent processing job so Demucs never runs twice in parallel
+# (two simultaneous Demucs processes would double RAM → OOM kill on Railway)
+_processing_semaphore = asyncio.Semaphore(1)
+
 SUPPORTED_EXTS = {
     ".mp3", ".wav", ".m4a", ".aac",
     ".ogg", ".flac", ".wma", ".opus",
@@ -118,14 +122,11 @@ async def upload_audio(
         input_path=str(input_path),
     )
 
-    background_tasks.add_task(
-        pipeline.process,
-        job_id,
-        jobs,
-        str(input_path),
-        str(job_dir),
-        original_format,
-    )
+    async def _process_with_semaphore():
+        async with _processing_semaphore:
+            await pipeline.process(job_id, jobs, str(input_path), str(job_dir), original_format)
+
+    background_tasks.add_task(_process_with_semaphore)
 
     logger.info("Job %s created for file %s (%d bytes)", job_id, file.filename, len(content))
     return {"job_id": job_id}
