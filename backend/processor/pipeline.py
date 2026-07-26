@@ -173,6 +173,8 @@ class AudioPipeline:
             "--name", "htdemucs_ft",
             "--two-stems", "vocals",
             "--clip-mode", "rescale",
+            "--device", "cpu",   # explicit CPU — no CUDA available on Railway
+            "--segment", "10",   # 10-second chunks → ~70 % less peak RAM
             "-o", job_dir,
             wav_path,
         ]
@@ -185,10 +187,20 @@ class AudioPipeline:
         self._update(jobs, job_id, "processing", 28,
                      "🤖 Demucs يعالج... (النموذج الأقوى – يأخذ وقتاً)")
 
-        stdout, stderr = await proc.communicate()
+        try:
+            # 15-minute hard timeout keeps Railway from OOM-killing the container
+            stdout, stderr = await asyncio.wait_for(
+                proc.communicate(), timeout=900
+            )
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.communicate()
+            raise RuntimeError("Demucs timed out after 15 minutes")
 
         if proc.returncode != 0:
-            raise RuntimeError(f"Demucs failed: {stderr.decode()[-500:]}")
+            combined = (stderr.decode(errors="replace") +
+                        stdout.decode(errors="replace"))[-600:]
+            raise RuntimeError(f"Demucs failed (exit {proc.returncode}): {combined}")
 
         self._update(jobs, job_id, "processing", 48,
                      "✅ اكتمل فصل الصوت البشري!")
